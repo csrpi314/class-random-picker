@@ -54,21 +54,23 @@ pip install pyside6==6.11.1
 ```bash
 python random_picker.py
 ```
-📖 使用说明
-首次使用
+## 📖 使用说明
+
+1. 首次使用  
 点击菜单 文件 → 导入 CSV 名册，选择符合格式的 CSV 文件（示例见下），确认后名单自动保存。
 
-调整权重
+2. 调整权重  
 通过 操作 → 修改权重 打开对话框，为不同学生设置不同权重（如课代表可设为 2，增加被抽中概率）。
 也可 操作 → 一键重置所有权重为 1 恢复等权。
 
-抽取学生
+3. 抽取学生  
 点击右侧 🎲 随机抽取 按钮，结果将显示在界面中央，颜色变红并记录日志。
 
-查看记录
+4. 查看记录  
 右侧日志区显示本次运行的所有操作，历史日志保存在 %APPDATA%\ClassRandomSampling\ 下的 .log 文件中。
 
-CSV 名册格式示例
+## CSV 名册格式示例
+
 ```csv
 姓名,权重
 张三,1
@@ -76,20 +78,22 @@ CSV 名册格式示例
 王五,1.5
 赵六
 ```
-第一行为表头，必须包含“姓名”列（或英文 name）。
+- 第一行为表头，必须包含“姓名”列（或英文 name）。
 
-“权重”列可选，缺失时自动设为 1。
+- “权重”列可选，缺失时自动设为 1。
 
-编码为 UTF-8 或 UTF-8 with BOM。
+- 编码为 UTF-8 或 UTF-8 with BOM。
 
-🔧 技术栈
-界面：PySide6 (Qt for Python)
+## 🔧 技术栈
 
-随机数：secrets.SystemRandom()
+- UI：PySide6 (Qt for Python)
 
-数据：JSON + 自定义日志文件
+- 随机数：secrets.SystemRandom()
 
-打包：Nuitka 4.1.3
+- 数据：JSON + 自定义日志文件
 
-🐛 问题反馈
+- 打包：Nuitka 4.1.3
+
+## 🐛 问题反馈
+
 若有 bug 或建议，请在 [Issues](https://github.com/csrpi314/class-random-picker/issues) 中提出。
