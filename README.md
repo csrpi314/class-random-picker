@@ -92,7 +92,7 @@ python random_picker.py
 
 - 数据：JSON + 自定义日志文件
 
-- 打包：Nuitka 4.1.3
+- 打包：Nuitka 4.1.3（运行需要 Windows 10 1809 或更高版本）
 
 ## 🐛 问题反馈
 
