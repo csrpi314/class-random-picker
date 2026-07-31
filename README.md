@@ -6,7 +6,7 @@
 
 一个基于 **PySide6** 开发的安全、可加权的班级随机抽取软件，适用于课堂点名、互动提问等场景。支持导入 CSV 班级名册、自定义权重、一键重置权重，所有操作自动记录日志。
 
-![主界面截图](https://via.placeholder.com/800x450?text=截图待补充)
+![主界面截图](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADD2psto1_wjHCuZ9SEPwCWcRnW8NRAALlE2sbf_1oV1qqkfstHNC0AQADAgADeQADPQQ.png)
 
 ## ✨ 功能特性
 
