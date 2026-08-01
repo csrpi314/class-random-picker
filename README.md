@@ -3,19 +3,21 @@
 
 🎲 班级随机抽取系统 | PySide6 + 安全随机 | 支持加权抽取、CSV 导入、日志记录
 
-
-一个基于 **PySide6** 开发的安全、可加权的班级随机抽取软件，适用于课堂点名、互动提问等场景。支持导入 CSV 班级名册、自定义权重、一键重置权重，所有操作自动记录日志。
+一个基于 **PySide6** 开发的安全、可加权的班级随机抽取软件，支持按性别过滤抽取，适用于课堂点名、互动提问等场景。导入 CSV 班级名册后，可自定义每位学生的权重，抽取过程采用系统安全随机数，公平且可追溯。所有操作均记录日志，并可打包为独立 exe 分发。
 
 ![主界面截图](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADD2psto1_wjHCuZ9SEPwCWcRnW8NRAALlE2sbf_1oV1qqkfstHNC0AQADAgADeQADPQQ.png)
 
 ## ✨ 功能特性
 
-- **📋 CSV 名册导入**  
+- **📋 CSV 名册导入（必含性别列）**  
   支持带“姓名”和“权重”列的 CSV 文件，权重可省略（默认为 1）。
 
 - **🎲 安全加权随机**  
   使用 `secrets.SystemRandom()` 实现密码学安全随机，支持放回抽取。  
   权重可在应用内随时调整，抽取概率与权重成正比。
+
+- **👫 按性别过滤抽取**  
+  主界面提供“全部抽取”、“只抽男生”、“只抽女生”三个单选按钮，切换后左侧列表实时显示对应性别的学生，抽取范围即时生效。
 
 - **⚖️ 一键等权重置**  
   随时将所有学生权重恢复为 1，方便公平随机抽取。
@@ -41,8 +43,8 @@
 ### 从源码运行
 1. 克隆仓库：
 ```bash
-git clone https://github.com/your-name/ClassRandomSampling.git
-cd ClassRandomSampling
+git clone https://github.com/csrpi314/class-random-picker.git
+cd class-random-picker
 ```
 2. 安装依赖：
 
@@ -52,7 +54,7 @@ pip install pyside6==6.11.1
 3. 运行软件：
 
 ```bash
-python random_picker.py
+python picker.py
 ```
 ## 📖 使用说明
 
@@ -72,11 +74,11 @@ python random_picker.py
 ## CSV 名册格式示例
 
 ```csv
-姓名,权重
-张三,1
-李四,2
-王五,1.5
-赵六
+姓名,性别,权重
+张三,男,1
+李四,女,2
+王五,f,1.5
+赵六,m
 ```
 - 第一行为表头，必须包含“姓名”列（或英文 name）。
 

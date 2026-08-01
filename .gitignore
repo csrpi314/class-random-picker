@@ -237,4 +237,7 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# Test CSV files
+*.csv
+
 # End of https://www.toptal.com/developers/gitignore/api/windows,python,sublimetext
