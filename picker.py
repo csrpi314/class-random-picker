@@ -213,15 +213,20 @@ class ClassRandomSampling(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
 
+        # 左侧表格：固定列宽
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["学号", "姓名"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # 设置为固定模式，禁止用户拖拽调整列宽
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.table.setColumnWidth(0, 40)    # 学号列 40 像素
+        self.table.setColumnWidth(1, 120)   # 姓名列为学号列的 3 倍
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         splitter.addWidget(self.table)
 
+        # 右侧面板
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(8, 8, 8, 8)
@@ -267,7 +272,7 @@ class ClassRandomSampling(QMainWindow):
         right_layout.addWidget(self.log_display)
 
         splitter.addWidget(right_widget)
-        splitter.setSizes([280, 620])
+        splitter.setSizes([260, 640])
         self.setCentralWidget(splitter)
 
         self.status_bar = QStatusBar()
@@ -309,7 +314,6 @@ class ClassRandomSampling(QMainWindow):
                     try:
                         with open(BACKUP_FILE, "r", encoding="utf-8") as f:
                             self.students = json.load(f)
-                        # 同样校验备份的唯一性
                         ids_set = set()
                         for s in self.students:
                             if s["id"] in ids_set:
