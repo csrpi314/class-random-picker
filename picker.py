@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from typing import Dict, List
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QSharedMemory
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 # ------------------------------------------------------------
 # 常量
 APP_NAME = "班级随机抽取系统"
-VERSION = "2.0"
+VERSION = "2.1"
 DATA_DIR = os.path.join(os.getenv("APPDATA"), "ClassRandomSampling")
 CLASS_FILE = os.path.join(DATA_DIR, "class_data.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "class_data.json.bak")
@@ -43,10 +43,10 @@ MAX_LOG_FILES = 1000
 
 # ------------------------------------------------------------
 class WeightEditDialog(QDialog):
-    """修改权重的对话框 —— 基于学号更新"""
+    """修改权重的对话框（步长0.50，范围0.00~99.50）"""
     def __init__(self, students: List[Dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("修改学生权重（按学号）")
+        self.setWindowTitle("修改学生权重（步长0.50，0为不参与抽取）")
         self.resize(450, 400)
         self.students = students
 
@@ -70,7 +70,8 @@ class WeightEditDialog(QDialog):
             self.table.setItem(row, 1, name_item)
 
             spin = QDoubleSpinBox()
-            spin.setRange(0.01, 9999.99)
+            spin.setRange(0.00, 99.50)          # 范围调整
+            spin.setSingleStep(0.50)            # 步长0.50
             spin.setDecimals(2)
             spin.setValue(s["weight"])
             spin.setProperty("student_id", s["id"])
@@ -94,10 +95,13 @@ class WeightEditDialog(QDialog):
 
 # ------------------------------------------------------------
 class ClassRandomSampling(QMainWindow):
+    """班级随机抽取学生主窗口（v2.1）"""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{VERSION}")
-        self.setFixedSize(900, 600)
+        self.setMinimumSize(800, 500)           # 最小尺寸，可缩放
+        self.resize(900, 600)                   # 初始大小
 
         self._check_data_dir()
 
@@ -213,15 +217,12 @@ class ClassRandomSampling(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
 
-        # 左侧表格：固定列宽
+        # 左侧表格（列宽自适应）
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["学号", "姓名"])
-        # 设置为固定模式，禁止用户拖拽调整列宽
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
-        self.table.setColumnWidth(0, 40)    # 学号列 40 像素
-        self.table.setColumnWidth(1, 120)   # 姓名列为学号列的 3 倍
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         splitter.addWidget(self.table)
@@ -240,11 +241,12 @@ class ClassRandomSampling(QMainWindow):
         self.result_label.setStyleSheet("font-weight: bold; color: #2c3e50; padding: 20px;")
         right_layout.addWidget(self.result_label)
 
+        # 抽取模式单选按钮（移除加速键，用 Ctrl+1/2/3 代替）
         mode_layout = QHBoxLayout()
         mode_layout.addStretch()
-        self.radio_all = QRadioButton("全部抽取(&A)")
-        self.radio_male = QRadioButton("只抽男生(&M)")
-        self.radio_female = QRadioButton("只抽女生(&F)")
+        self.radio_all = QRadioButton("全部抽取")
+        self.radio_male = QRadioButton("只抽男生")
+        self.radio_female = QRadioButton("只抽女生")
         self.radio_all.setChecked(True)
         self.radio_all.toggled.connect(self._on_mode_changed)
         self.radio_male.toggled.connect(self._on_mode_changed)
@@ -272,7 +274,7 @@ class ClassRandomSampling(QMainWindow):
         right_layout.addWidget(self.log_display)
 
         splitter.addWidget(right_widget)
-        splitter.setSizes([260, 640])
+        splitter.setSizes([280, 620])
         self.setCentralWidget(splitter)
 
         self.status_bar = QStatusBar()
@@ -282,10 +284,28 @@ class ClassRandomSampling(QMainWindow):
         self.setStatusBar(self.status_bar)
 
     def _init_shortcuts(self):
+        # 抽取快捷键
         QShortcut(QKeySequence("F5"), self).activated.connect(self._draw_student)
 
+        # 抽取模式切换快捷键（Ctrl+1/2/3）
+        QShortcut(QKeySequence("Ctrl+1"), self).activated.connect(lambda: self._set_draw_mode("all"))
+        QShortcut(QKeySequence("Ctrl+2"), self).activated.connect(lambda: self._set_draw_mode("male"))
+        QShortcut(QKeySequence("Ctrl+3"), self).activated.connect(lambda: self._set_draw_mode("female"))
+
+    def _set_draw_mode(self, mode: str):
+        """通过快捷键设置抽取模式"""
+        if not self.students:
+            QMessageBox.information(self, "提示", "班级名单为空，无法切换模式。")
+            return
+        if mode == "all":
+            self.radio_all.setChecked(True)
+        elif mode == "male":
+            self.radio_male.setChecked(True)
+        elif mode == "female":
+            self.radio_female.setChecked(True)
+
     # ----------------------------------------------------------
-    # 数据持久化（含学号唯一性校验）
+    # 数据持久化
     # ----------------------------------------------------------
     def _load_data(self):
         if os.path.exists(CLASS_FILE):
@@ -349,6 +369,7 @@ class ClassRandomSampling(QMainWindow):
     # 表格显示与筛选
     # ----------------------------------------------------------
     def _get_filtered_students(self) -> List[Dict]:
+        """按性别过滤，不排除权重为0的学生（用于界面显示）"""
         if self.draw_mode == "all":
             return self.students.copy()
         elif self.draw_mode == "male":
@@ -398,10 +419,11 @@ class ClassRandomSampling(QMainWindow):
             QMessageBox.information(self, "提示", "班级名单为空，请先导入 CSV 名册。")
             return
 
-        filtered = self._get_filtered_students()
+        # 抽取时排除权重为0的学生
+        filtered = [s for s in self._get_filtered_students() if s["weight"] > 0]
         if not filtered:
             mode_text = {"male": "男生", "female": "女生", "all": "学生"}[self.draw_mode]
-            QMessageBox.information(self, "提示", f"没有{mode_text}可抽取。")
+            QMessageBox.information(self, "提示", f"没有可抽取的{mode_text}（权重均设为0）。")
             return
 
         if not self._validate_weights(filtered):
@@ -432,7 +454,7 @@ class ClassRandomSampling(QMainWindow):
     @Slot()
     def _edit_weights(self):
         if not self.students:
-            QMessageBox.information(self, "提示", "班级名单为空。")
+            QMessageBox.information(self, "提示", "班级名单为空，无法修改权重。")
             return
 
         dialog = WeightEditDialog(self.students, self)
@@ -510,6 +532,8 @@ class ClassRandomSampling(QMainWindow):
 
                 new_students = []
                 ids_seen = set()
+                weight_fixes = []           # 收集权重修正信息
+
                 for row in reader:
                     sid_str = (row.get(id_col) or "").strip()
                     if not sid_str:
@@ -538,21 +562,30 @@ class ClassRandomSampling(QMainWindow):
                     else:
                         raise ValueError(f"学号 {sid_int} 的性别“{sex_val}”无效，请用男/女或m/f。")
 
+                    # 权重处理（步长0.50，范围0.00~99.50）
                     weight = 1.0
                     if weight_col:
                         weight_str = (row.get(weight_col) or "").strip()
                         if weight_str:
                             try:
                                 w = float(weight_str)
-                                if w <= 0:
-                                    QMessageBox.information(self, "权重修正",
-                                                            f"学号 {sid_int} 的权重 {w} 非法，已设为1")
-                                    w = 1.0
-                                weight = round(w, 2)
+                                if w < 0.0:
+                                    w = 0.0
+                                    weight_fixes.append(f"学号 {sid_int} 权重为负，已设为0（不参与抽取）")
+                                elif w > 99.50:
+                                    w = 99.50
+                                    weight_fixes.append(f"学号 {sid_int} 权重超过99.50，已调整为99.50")
+                                # 规整为0.50倍数
+                                original_w = w
+                                w = round(w * 2) / 2
+                                if w > 99.50: w = 99.50
+                                elif w < 0.0: w = 0.0
+                                if abs(w - original_w) > 0.001:
+                                    weight_fixes.append(f"学号 {sid_int} 权重 {weight_str} 已调整为 {w:.2f}（步长0.50）")
+                                weight = w
                             except ValueError:
-                                QMessageBox.information(self, "权重修正",
-                                                        f"学号 {sid_int} 的权重“{weight_str}”无效，已设为1")
-                                weight = 1.0
+                                weight = 0.0
+                                weight_fixes.append(f"学号 {sid_int} 权重“{weight_str}”非法，已设为0（不参与抽取）")
 
                     new_students.append({
                         "id": sid_int,
@@ -563,7 +596,14 @@ class ClassRandomSampling(QMainWindow):
                     ids_seen.add(sid_int)
 
                 if not new_students:
-                    raise ValueError("文件中未解析到任何有效学生。")
+                    raise ValueError("文件中未解析到任何有效学生，请检查名册内容。")
+
+                # 如果有权重修正，统一提示
+                if weight_fixes:
+                    msg = "以下权重已自动修正：\n" + "\n".join(weight_fixes[:10])
+                    if len(weight_fixes) > 10:
+                        msg += f"\n... 共 {len(weight_fixes)} 处修正，仅显示前10条。"
+                    QMessageBox.information(self, "权重自动修正", msg)
 
         except Exception as e:
             QMessageBox.critical(self, "导入失败", f"读取 CSV 文件时出错:\n{e}")
@@ -594,19 +634,33 @@ class ClassRandomSampling(QMainWindow):
             self, "关于",
             f"{APP_NAME} v{VERSION}\n\n"
             "基于 PySide6 的安全加权随机抽取系统。\n"
-            "使用学号作为唯一标识，支持性别过滤、权重调节。\n\n"
+            "使用学号作为唯一标识，支持性别过滤、权重调节。\n"
+            "权重步长0.50，设为0表示不参与抽取。\n\n"
             "快捷键：\n"
             "  Ctrl+O  导入名册\n"
             "  Ctrl+E  修改权重\n"
             "  Ctrl+R  重置权重\n"
             "  F5      随机抽取\n"
-            "  F1      关于\n"
-            "  Alt+A/M/F  切换抽取范围",
+            "  Ctrl+1  全部抽取\n"
+            "  Ctrl+2  只抽男生\n"
+            "  Ctrl+3  只抽女生\n"
+            "  F1      关于\n\n"
+            "注意：同一天日志文件数量上限为1000个，超出将自动覆盖最早的日志文件。"
         )
 
 # ------------------------------------------------------------
 if __name__ == "__main__":
+    # 高DPI适配
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app = QApplication(sys.argv)
+
+    # 单实例检测
+    shared_mem = QSharedMemory("ClassRandomSampler_Instance_2.1")
+    if shared_mem.attach():
+        QMessageBox.warning(None, "提示", "程序已在运行中，请勿重复启动。")
+        sys.exit(1)
+    shared_mem.create(1)
+
     window = ClassRandomSampling()
     window.show()
     sys.exit(app.exec())
