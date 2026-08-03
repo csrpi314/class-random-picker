@@ -41,6 +41,10 @@ ipcker.build/
 picker.dist/
 picker.onefile-build/
 
+
+pack.bat
+lottery.exe
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
