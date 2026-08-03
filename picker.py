@@ -206,7 +206,7 @@ class ClassRandomSampling(QMainWindow):
         weight_action = action_menu.addAction("修改权重...(&W)")
         weight_action.setShortcut(QKeySequence("Ctrl+E"))
         weight_action.triggered.connect(self._edit_weights)
-        reset_action = action_menu.addAction("一键重置所有权重为 1(&R)")
+        reset_action = action_menu.addAction("重置权重(&R)")
         reset_action.setShortcut(QKeySequence("Ctrl+R"))
         reset_action.triggered.connect(self._reset_all_weights)
 
@@ -439,7 +439,8 @@ class ClassRandomSampling(QMainWindow):
             QMessageBox.critical(self, "抽取失败", f"随机抽取出错:\n{e}")
             return
 
-        self.result_label.setText(chosen_student["name"])
+        display_text = f"{str(chosen_student['id']).zfill(3)} {chosen_student['name']}"
+        self.result_label.setText(display_text)
         self.result_label.setStyleSheet("font-weight: bold; color: #e74c3c; padding: 20px;")
 
         mode_text = {"male": "只抽男生", "female": "只抽女生", "all": "全部抽取"}[self.draw_mode]
@@ -483,7 +484,7 @@ class ClassRandomSampling(QMainWindow):
         for s in self.students:
             s["weight"] = 1.0
         self._save_data()
-        self._log_operation("重置所有权重为 1")
+        self._log_operation("重置所有学生权重为 1")
         self._update_status_bar()
         self._populate_table()
 
@@ -493,8 +494,8 @@ class ClassRandomSampling(QMainWindow):
             self, "导入提示",
             "CSV名册格式（UTF-8）：\n"
             "学号,姓名,性别,权重\n"
-            "001,张三,男,1\n"
-            "002,李四,女,2\n"
+            "1,张三,男,1\n"
+            "2,李四,女,2\n"
             "（学号、姓名、性别必填，权重可选默认为1）"
         )
         file_path, _ = QFileDialog.getOpenFileName(
