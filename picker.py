@@ -181,7 +181,7 @@ class ClassRandomSampling(QMainWindow):
 
     def _show_log_error(self, msg: str):
         if hasattr(self, "status_label"):
-            self.status_label.setStyleSheet("color: red;")
+            self.status_label.setStyleSheet("color: blue;")
             self.status_label.setText(msg)
             QApplication.processEvents()
             from PySide6.QtCore import QTimer
@@ -238,7 +238,7 @@ class ClassRandomSampling(QMainWindow):
         font.setFamilies(["Microsoft YaHei"])
         font.setPointSize(48)
         self.result_label.setFont(font)
-        self.result_label.setStyleSheet("font-weight: bold; color: #2c3e50; padding: 20px;")
+        self.result_label.setStyleSheet("font-weight: bold; color: blue; padding: 20px;")
         right_layout.addWidget(self.result_label)
 
         # 抽取模式单选按钮（移除加速键，用 Ctrl+1/2/3 代替）
@@ -423,7 +423,7 @@ class ClassRandomSampling(QMainWindow):
         filtered = [s for s in self._get_filtered_students() if s["weight"] > 0]
         if not filtered:
             mode_text = {"male": "男生", "female": "女生", "all": "学生"}[self.draw_mode]
-            QMessageBox.information(self, "提示", f"没有可抽取的{mode_text}（权重均设为0）。")
+            QMessageBox.information(self, "提示", f"没有可抽取的{mode_text}（权重均为0）。")
             return
 
         if not self._validate_weights(filtered):
@@ -441,15 +441,15 @@ class ClassRandomSampling(QMainWindow):
 
         display_text = f"{str(chosen_student['id']).zfill(3)} {chosen_student['name']}"
         self.result_label.setText(display_text)
-        self.result_label.setStyleSheet("font-weight: bold; color: #e74c3c; padding: 20px;")
+        self.result_label.setStyleSheet("font-weight: bold; color: blue; padding: 20px;")
 
         mode_text = {"male": "只抽男生", "female": "只抽女生", "all": "全部抽取"}[self.draw_mode]
         self._log_operation(
-            f"抽取模式: {mode_text} | "
+            f"模式: {mode_text} | "
             f"学号: {str(chosen_student['id']).zfill(3)} | "
             f"姓名: {chosen_student['name']} | "
             f"性别: {chosen_student['sex']} | "
-            f"权重: {chosen_student['weight']:.2f}"
+            f"W: {chosen_student['weight']:.2f}"
         )
 
     @Slot()
