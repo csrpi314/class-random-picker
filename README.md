@@ -5,7 +5,8 @@
 
 一个基于 **PySide6** 开发的安全、可加权的班级随机抽取软件，支持按性别过滤抽取，适用于课堂点名、互动提问等场景。导入 CSV 班级名册后，可自定义每位学生的权重，抽取过程采用系统安全随机数，公平且可追溯。所有操作均记录日志，并可打包为独立 exe 分发。
 
-![主界面截图](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADD2psto1_wjHCuZ9SEPwCWcRnW8NRAALlE2sbf_1oV1qqkfstHNC0AQADAgADeQADPQQ.png)
+![主界面截图](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADEmpxOqQm199UpRNVbi308zCn11qVAAKdEGsbdkaQVwy_bGLDLl4IAQADAgADeQADPQQ.png)
+\* 截图所示数据仅供测试，由 Python 生成
 
 ## ✨ 功能特性
 
@@ -32,7 +33,7 @@
 
 | 主界面 | 权重修改 | 抽取结果 |
 |--------|----------|----------|
-| ![主界面](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADD2psto1_wjHCuZ9SEPwCWcRnW8NRAALlE2sbf_1oV1qqkfstHNC0AQADAgADeQADPQQ.png) | ![权重](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADDmpstozzSQufm_wfx5EWYqna4lDRAALkE2sbf_1oV2F1gWgvOnTSAQADAgADeAADPQQ.png) | ![结果](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADEGpsto376Scy1D4Z8xWohk8Jaw-MAALmE2sbf_1oV0zopL8a1q4EAQADAgADeQADPQQ.png) |
+| ![主界面](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADEmpxOqQm199UpRNVbi308zCn11qVAAKdEGsbdkaQVwy_bGLDLl4IAQADAgADeQADPQQ.png) | ![权重](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADEWpxOqPBz2GWuOw-lzVmETBDTNxzAAKcEGsbdkaQV7y69GANxmX0AQADAgADeAADPQQ.png) | ![结果](https://image.zsh26.cc.cd/file/AgACAgUAAyEGAAMBA3LocAADE2pxOqRP-EcZwGfdKrcXuvqUaiL_AAKeEGsbdkaQV59ERTHEeBnyAQADAgADeQADPQQ.png) |
 
 ## 🚀 快速开始
 
