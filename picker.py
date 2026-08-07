@@ -7,8 +7,9 @@ import sys
 from datetime import datetime
 from typing import Dict, List
 
-from PySide6.QtCore import Qt, Slot, QSharedMemory
+from PySide6.QtCore import Qt, Slot, QSharedMemory, QSettings
 from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtCore import QLockFile
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -35,10 +36,8 @@ from PySide6.QtWidgets import (
 # ------------------------------------------------------------
 # 常量
 APP_NAME = "班级随机抽取系统"
-VERSION = "2.1"
-DATA_DIR = os.path.join(os.getenv("APPDATA"), "ClassRandomSampling")
-CLASS_FILE = os.path.join(DATA_DIR, "class_data.json")
-BACKUP_FILE = os.path.join(DATA_DIR, "class_data.json.bak")
+VERSION = "2.2"
+DEFAULT_DATA_DIR = os.path.join(os.getenv("APPDATA"), "ClassRandomSampling")
 MAX_LOG_FILES = 1000
 
 # ------------------------------------------------------------
@@ -70,8 +69,8 @@ class WeightEditDialog(QDialog):
             self.table.setItem(row, 1, name_item)
 
             spin = QDoubleSpinBox()
-            spin.setRange(0.00, 99.50)          # 范围调整
-            spin.setSingleStep(0.50)            # 步长0.50
+            spin.setRange(0.00, 99.50)
+            spin.setSingleStep(0.50)
             spin.setDecimals(2)
             spin.setValue(s["weight"])
             spin.setProperty("student_id", s["id"])
@@ -95,15 +94,28 @@ class WeightEditDialog(QDialog):
 
 # ------------------------------------------------------------
 class ClassRandomSampling(QMainWindow):
-    """班级随机抽取学生主窗口（v2.1）"""
+    """班级随机抽取学生主窗口（v2.2）"""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{VERSION}")
-        self.setMinimumSize(800, 500)           # 最小尺寸，可缩放
-        self.resize(900, 600)                   # 初始大小
+        self.setMinimumSize(800, 500)
+        self.resize(900, 600)
 
+        # 数据目录设置（从QSettings读取，无则使用默认）
+        self.settings = QSettings("ClassRandomSampling", "App")
+        custom_dir = self.settings.value("data_dir", "")
+        if custom_dir and os.path.isdir(custom_dir):
+            self.data_dir = custom_dir
+        else:
+            self.data_dir = DEFAULT_DATA_DIR
+
+        # 确保目录存在
         self._check_data_dir()
+
+        # 初始化路径
+        self.class_file = os.path.join(self.data_dir, "class_data.json")
+        self.backup_file = os.path.join(self.data_dir, "class_data.json.bak")
 
         self.sysrand = secrets.SystemRandom()
         self.students: List[Dict] = []
@@ -119,30 +131,85 @@ class ClassRandomSampling(QMainWindow):
         self._log_operation("程序启动")
 
     # ----------------------------------------------------------
-    # 数据目录与日志
+    # 数据目录管理
     # ----------------------------------------------------------
     def _check_data_dir(self):
         try:
-            os.makedirs(DATA_DIR, exist_ok=True)
-            test_file = os.path.join(DATA_DIR, ".write_test")
+            os.makedirs(self.data_dir, exist_ok=True)
+            test_file = os.path.join(self.data_dir, ".write_test")
             with open(test_file, "w") as f:
                 f.write("test")
             os.remove(test_file)
         except Exception as e:
             QMessageBox.critical(
                 None, "致命错误",
-                f"无法访问数据目录：{DATA_DIR}\n请检查磁盘权限。\n\n错误详情：{e}"
+                f"无法访问数据目录：{self.data_dir}\n请检查磁盘权限。\n\n错误详情：{e}"
             )
             sys.exit(1)
 
+    def _switch_data_dir(self, new_dir: str):
+        """切换数据目录：复制文件，更新设置，重新加载"""
+        # 复制当前目录下所有文件到新目录
+        try:
+            os.makedirs(new_dir, exist_ok=True)
+            for item in os.listdir(self.data_dir):
+                src = os.path.join(self.data_dir, item)
+                dst = os.path.join(new_dir, item)
+                if os.path.isfile(src):
+                    shutil.copy2(src, dst)
+                elif os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+        except Exception as e:
+            QMessageBox.warning(self, "复制失败", f"无法将数据复制到新目录：{e}")
+            return
+
+        # 更新设置和路径
+        self.settings.setValue("data_dir", new_dir)
+        self.data_dir = new_dir
+        self.class_file = os.path.join(self.data_dir, "class_data.json")
+        self.backup_file = os.path.join(self.data_dir, "class_data.json.bak")
+        self.current_log_path = self._get_new_log_path()
+
+        # 重新加载数据并刷新界面
+        self._load_data()
+        self._populate_table()
+        self._update_status_bar()
+        self._log_operation(f"数据目录已切换至：{new_dir}")
+
+        QMessageBox.information(self, "切换成功", f"数据目录已更改为：{new_dir}")
+
+    @Slot()
+    def _change_data_dir(self):
+        """菜单动作：选择新数据目录"""
+        new_dir = QFileDialog.getExistingDirectory(
+            self, "选择数据存储文件夹", self.data_dir
+        )
+        if not new_dir:
+            return
+        if new_dir == self.data_dir:
+            return
+
+        # 询问是否复制数据
+        reply = QMessageBox.question(
+            self, "切换数据目录",
+            f"要将现有数据复制到新目录并切换吗？\n\n新目录：{new_dir}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        if reply == QMessageBox.Yes:
+            self._switch_data_dir(new_dir)
+
+    # ----------------------------------------------------------
+    # 日志工具
+    # ----------------------------------------------------------
     def _get_new_log_path(self) -> str:
         today = datetime.now().strftime("%Y%m%d")
-        base = os.path.join(DATA_DIR, f"{today}.log")
+        base = os.path.join(self.data_dir, f"{today}.log")
         if not os.path.exists(base):
             return base
 
         existing = []
-        for fname in os.listdir(DATA_DIR):
+        for fname in os.listdir(self.data_dir):
             if fname.startswith(f"{today}_") and fname.endswith(".log"):
                 try:
                     num = int(fname[len(today)+1:-4])
@@ -152,18 +219,18 @@ class ClassRandomSampling(QMainWindow):
 
         for i in range(1, MAX_LOG_FILES + 1):
             if i not in existing:
-                return os.path.join(DATA_DIR, f"{today}_{i}.log")
+                return os.path.join(self.data_dir, f"{today}_{i}.log")
 
         if existing:
             old_num = min(existing)
-            old_path = os.path.join(DATA_DIR, f"{today}_{old_num}.log")
+            old_path = os.path.join(self.data_dir, f"{today}_{old_num}.log")
             try:
                 os.remove(old_path)
             except OSError:
                 pass
-            return os.path.join(DATA_DIR, f"{today}_{old_num}.log")
+            return os.path.join(self.data_dir, f"{today}_{old_num}.log")
 
-        return os.path.join(DATA_DIR, f"{today}_overflow.log")
+        return os.path.join(self.data_dir, f"{today}_overflow.log")
 
     def _log_operation(self, message: str):
         now = datetime.now()
@@ -181,7 +248,7 @@ class ClassRandomSampling(QMainWindow):
 
     def _show_log_error(self, msg: str):
         if hasattr(self, "status_label"):
-            self.status_label.setStyleSheet("color: blue;")
+            self.status_label.setStyleSheet("color: red;")
             self.status_label.setText(msg)
             QApplication.processEvents()
             from PySide6.QtCore import QTimer
@@ -193,15 +260,21 @@ class ClassRandomSampling(QMainWindow):
     def _init_ui(self):
         menu_bar = self.menuBar()
 
+        # 文件菜单
         file_menu = menu_bar.addMenu("文件(&F)")
         import_action = file_menu.addAction("导入 CSV 名册...(&I)")
         import_action.setShortcut(QKeySequence("Ctrl+O"))
         import_action.triggered.connect(self._import_csv)
         file_menu.addSeparator()
+        # 新增：更改数据目录
+        change_dir_action = file_menu.addAction("设置数据目录...")
+        change_dir_action.triggered.connect(self._change_data_dir)
+        file_menu.addSeparator()
         exit_action = file_menu.addAction("退出(&X)")
         exit_action.setShortcut(QKeySequence("Ctrl+Q"))
         exit_action.triggered.connect(self.close)
 
+        # 操作菜单
         action_menu = menu_bar.addMenu("操作(&A)")
         weight_action = action_menu.addAction("修改权重...(&W)")
         weight_action.setShortcut(QKeySequence("Ctrl+E"))
@@ -210,6 +283,7 @@ class ClassRandomSampling(QMainWindow):
         reset_action.setShortcut(QKeySequence("Ctrl+R"))
         reset_action.triggered.connect(self._reset_all_weights)
 
+        # 帮助菜单
         help_menu = menu_bar.addMenu("帮助(&H)")
         about_action = help_menu.addAction("关于(&A)")
         about_action.setShortcut(QKeySequence("F1"))
@@ -238,10 +312,9 @@ class ClassRandomSampling(QMainWindow):
         font.setFamilies(["Microsoft YaHei"])
         font.setPointSize(48)
         self.result_label.setFont(font)
-        self.result_label.setStyleSheet("font-weight: bold; color: blue; padding: 20px;")
+        self.result_label.setStyleSheet("font-weight: bold; color: #2c3e50; padding: 20px;")
         right_layout.addWidget(self.result_label)
 
-        # 抽取模式单选按钮（移除加速键，用 Ctrl+1/2/3 代替）
         mode_layout = QHBoxLayout()
         mode_layout.addStretch()
         self.radio_all = QRadioButton("全部抽取")
@@ -284,16 +357,12 @@ class ClassRandomSampling(QMainWindow):
         self.setStatusBar(self.status_bar)
 
     def _init_shortcuts(self):
-        # 抽取快捷键
         QShortcut(QKeySequence("F5"), self).activated.connect(self._draw_student)
-
-        # 抽取模式切换快捷键（Ctrl+1/2/3）
         QShortcut(QKeySequence("Ctrl+1"), self).activated.connect(lambda: self._set_draw_mode("all"))
         QShortcut(QKeySequence("Ctrl+2"), self).activated.connect(lambda: self._set_draw_mode("male"))
         QShortcut(QKeySequence("Ctrl+3"), self).activated.connect(lambda: self._set_draw_mode("female"))
 
     def _set_draw_mode(self, mode: str):
-        """通过快捷键设置抽取模式"""
         if not self.students:
             QMessageBox.information(self, "提示", "班级名单为空，无法切换模式。")
             return
@@ -305,12 +374,12 @@ class ClassRandomSampling(QMainWindow):
             self.radio_female.setChecked(True)
 
     # ----------------------------------------------------------
-    # 数据持久化
+    # 数据持久化（JSON）
     # ----------------------------------------------------------
     def _load_data(self):
-        if os.path.exists(CLASS_FILE):
+        if os.path.exists(self.class_file):
             try:
-                with open(CLASS_FILE, "r", encoding="utf-8") as f:
+                with open(self.class_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 self.students = []
                 for s in data:
@@ -330,9 +399,9 @@ class ClassRandomSampling(QMainWindow):
                     ids_set.add(s["id"])
 
             except Exception as e:
-                if os.path.exists(BACKUP_FILE):
+                if os.path.exists(self.backup_file):
                     try:
-                        with open(BACKUP_FILE, "r", encoding="utf-8") as f:
+                        with open(self.backup_file, "r", encoding="utf-8") as f:
                             self.students = json.load(f)
                         ids_set = set()
                         for s in self.students:
@@ -354,9 +423,9 @@ class ClassRandomSampling(QMainWindow):
 
     def _save_data(self, backup: bool = True):
         try:
-            if backup and os.path.exists(CLASS_FILE):
-                shutil.copy2(CLASS_FILE, BACKUP_FILE)
-            with open(CLASS_FILE, "w", encoding="utf-8") as f:
+            if backup and os.path.exists(self.class_file):
+                shutil.copy2(self.class_file, self.backup_file)
+            with open(self.class_file, "w", encoding="utf-8") as f:
                 json.dump(self.students, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self._show_log_error(f"保存数据失败：{e}")
@@ -369,7 +438,6 @@ class ClassRandomSampling(QMainWindow):
     # 表格显示与筛选
     # ----------------------------------------------------------
     def _get_filtered_students(self) -> List[Dict]:
-        """按性别过滤，不排除权重为0的学生（用于界面显示）"""
         if self.draw_mode == "all":
             return self.students.copy()
         elif self.draw_mode == "male":
@@ -419,7 +487,6 @@ class ClassRandomSampling(QMainWindow):
             QMessageBox.information(self, "提示", "班级名单为空，请先导入 CSV 名册。")
             return
 
-        # 抽取时排除权重为0的学生
         filtered = [s for s in self._get_filtered_students() if s["weight"] > 0]
         if not filtered:
             mode_text = {"male": "男生", "female": "女生", "all": "学生"}[self.draw_mode]
@@ -533,7 +600,7 @@ class ClassRandomSampling(QMainWindow):
 
                 new_students = []
                 ids_seen = set()
-                weight_fixes = []           # 收集权重修正信息
+                weight_fixes = []
 
                 for row in reader:
                     sid_str = (row.get(id_col) or "").strip()
@@ -563,7 +630,6 @@ class ClassRandomSampling(QMainWindow):
                     else:
                         raise ValueError(f"学号 {sid_int} 的性别“{sex_val}”无效，请用男/女或m/f。")
 
-                    # 权重处理（步长0.50，范围0.00~99.50）
                     weight = 1.0
                     if weight_col:
                         weight_str = (row.get(weight_col) or "").strip()
@@ -576,7 +642,6 @@ class ClassRandomSampling(QMainWindow):
                                 elif w > 99.50:
                                     w = 99.50
                                     weight_fixes.append(f"学号 {sid_int} 权重超过99.50，已调整为99.50")
-                                # 规整为0.50倍数
                                 original_w = w
                                 w = round(w * 2) / 2
                                 if w > 99.50: w = 99.50
@@ -599,7 +664,6 @@ class ClassRandomSampling(QMainWindow):
                 if not new_students:
                     raise ValueError("文件中未解析到任何有效学生，请检查名册内容。")
 
-                # 如果有权重修正，统一提示
                 if weight_fixes:
                     msg = "以下权重已自动修正：\n" + "\n".join(weight_fixes[:10])
                     if len(weight_fixes) > 10:
@@ -651,16 +715,23 @@ class ClassRandomSampling(QMainWindow):
 
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    # 高DPI适配
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app = QApplication(sys.argv)
 
-    # 单实例检测
-    shared_mem = QSharedMemory("ClassRandomSampler_Instance_2.1")
-    if shared_mem.attach():
+    # 使用锁文件检测单实例（数据目录下创建 .lock 文件）
+    lock_file_path = os.path.join(
+        os.getenv("APPDATA"), "ClassRandomSampling", "app.lock"
+    )
+    # 确保锁文件目录存在
+    os.makedirs(os.path.dirname(lock_file_path), exist_ok=True)
+
+    lock_file = QLockFile(lock_file_path)
+    lock_file.setStaleLockTime(0)  # 禁用陈旧锁判定，完全依赖 OS 文件锁
+
+    if not lock_file.tryLock(100):  # 尝试加锁，100ms 超时
+        # 加锁失败 → 已有实例运行
         QMessageBox.warning(None, "提示", "程序已在运行中，请勿重复启动。")
         sys.exit(1)
-    shared_mem.create(1)
 
     window = ClassRandomSampling()
     window.show()
