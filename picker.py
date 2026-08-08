@@ -5,11 +5,10 @@ import secrets
 import shutil
 import sys
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt, Slot, QSharedMemory, QSettings
-from PySide6.QtGui import QShortcut, QKeySequence
-from PySide6.QtCore import QLockFile
+from PySide6.QtCore import Qt, Slot, QLockFile, QSettings
+from PySide6.QtGui import QShortcut, QKeySequence, QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -36,9 +35,8 @@ from PySide6.QtWidgets import (
 # ------------------------------------------------------------
 # 常量
 APP_NAME = "班级随机抽取系统"
-VERSION = "2.2"
+VERSION = "2.4"
 DEFAULT_DATA_DIR = os.path.join(os.getenv("APPDATA"), "ClassRandomSampling")
-MAX_LOG_FILES = 1000
 
 # ------------------------------------------------------------
 class WeightEditDialog(QDialog):
@@ -94,16 +92,22 @@ class WeightEditDialog(QDialog):
 
 # ------------------------------------------------------------
 class ClassRandomSampling(QMainWindow):
-    """班级随机抽取学生主窗口（v2.2）"""
+    """班级随机抽取学生主窗口（v2.4）"""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{VERSION}")
-        self.setMinimumSize(800, 500)
-        self.resize(900, 600)
 
-        # 数据目录设置（从QSettings读取，无则使用默认）
+        # 恢复上次窗口位置
         self.settings = QSettings("ClassRandomSampling", "App")
+        saved_geometry = self.settings.value("window_geometry")
+        if saved_geometry:
+            self.restoreGeometry(saved_geometry)
+        else:
+            self.setMinimumSize(800, 500)
+            self.resize(900, 600)
+
+        # 数据目录设置
         custom_dir = self.settings.value("data_dir", "")
         if custom_dir and os.path.isdir(custom_dir):
             self.data_dir = custom_dir
@@ -123,10 +127,14 @@ class ClassRandomSampling(QMainWindow):
 
         self.draw_mode = "all"
 
+        # 统计数据缓存
+        self._stats_cache = {"count": 0, "male": 0, "female": 0, "total_weight": 0.0}
+
         self._init_ui()
         self._init_shortcuts()
         self._load_data()
         self._populate_table()
+        self._update_stats_cache()
         self._update_status_bar()
         self._log_operation("程序启动")
 
@@ -148,33 +156,54 @@ class ClassRandomSampling(QMainWindow):
             sys.exit(1)
 
     def _switch_data_dir(self, new_dir: str):
-        """切换数据目录：复制文件，更新设置，重新加载"""
-        # 复制当前目录下所有文件到新目录
+        """切换数据目录：复制文件，更新设置，重新加载，迁移锁文件"""
+        # 复制当前目录下所有文件到新目录，跳过失败文件
+        failed_files = []
         try:
             os.makedirs(new_dir, exist_ok=True)
             for item in os.listdir(self.data_dir):
                 src = os.path.join(self.data_dir, item)
                 dst = os.path.join(new_dir, item)
-                if os.path.isfile(src):
-                    shutil.copy2(src, dst)
-                elif os.path.isdir(src):
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                try:
+                    if os.path.isfile(src):
+                        shutil.copy2(src, dst)
+                    elif os.path.isdir(src):
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
+                except Exception as e:
+                    failed_files.append(item)
         except Exception as e:
             QMessageBox.warning(self, "复制失败", f"无法将数据复制到新目录：{e}")
             return
+
+        # 迁移锁文件：释放旧锁，在新目录加锁
+        if hasattr(self, '_lock_file'):
+            old_lock = self._lock_file
+            old_lock.unlock()
+            new_lock_path = os.path.join(new_dir, "app.lock")
+            new_lock = QLockFile(new_lock_path)
+            new_lock.setStaleLockTime(0)
+            if new_lock.tryLock(100):
+                self._lock_file = new_lock
+            else:
+                QMessageBox.warning(self, "锁迁移失败", "新目录无法获取实例锁，程序将继续运行但可能失去单实例保护。")
 
         # 更新设置和路径
         self.settings.setValue("data_dir", new_dir)
         self.data_dir = new_dir
         self.class_file = os.path.join(self.data_dir, "class_data.json")
         self.backup_file = os.path.join(self.data_dir, "class_data.json.bak")
-        self.current_log_path = self._get_new_log_path()
+        self.current_log_path = self._get_new_log_path()  # 刷新日志路径
 
         # 重新加载数据并刷新界面
         self._load_data()
         self._populate_table()
+        self._update_stats_cache()
         self._update_status_bar()
         self._log_operation(f"数据目录已切换至：{new_dir}")
+
+        if failed_files:
+            QMessageBox.warning(self, "部分文件复制失败",
+                                f"以下文件因被占用或权限不足未能复制：\n{', '.join(failed_files)}")
 
         QMessageBox.information(self, "切换成功", f"数据目录已更改为：{new_dir}")
 
@@ -189,7 +218,6 @@ class ClassRandomSampling(QMainWindow):
         if new_dir == self.data_dir:
             return
 
-        # 询问是否复制数据
         reply = QMessageBox.question(
             self, "切换数据目录",
             f"要将现有数据复制到新目录并切换吗？\n\n新目录：{new_dir}",
@@ -203,34 +231,18 @@ class ClassRandomSampling(QMainWindow):
     # 日志工具
     # ----------------------------------------------------------
     def _get_new_log_path(self) -> str:
+        """生成不重复的日志文件路径（无数量限制）"""
         today = datetime.now().strftime("%Y%m%d")
         base = os.path.join(self.data_dir, f"{today}.log")
         if not os.path.exists(base):
             return base
 
-        existing = []
-        for fname in os.listdir(self.data_dir):
-            if fname.startswith(f"{today}_") and fname.endswith(".log"):
-                try:
-                    num = int(fname[len(today)+1:-4])
-                    existing.append(num)
-                except ValueError:
-                    pass
-
-        for i in range(1, MAX_LOG_FILES + 1):
-            if i not in existing:
-                return os.path.join(self.data_dir, f"{today}_{i}.log")
-
-        if existing:
-            old_num = min(existing)
-            old_path = os.path.join(self.data_dir, f"{today}_{old_num}.log")
-            try:
-                os.remove(old_path)
-            except OSError:
-                pass
-            return os.path.join(self.data_dir, f"{today}_{old_num}.log")
-
-        return os.path.join(self.data_dir, f"{today}_overflow.log")
+        i = 1
+        while True:
+            candidate = os.path.join(self.data_dir, f"{today}_{i}.log")
+            if not os.path.exists(candidate):
+                return candidate
+            i += 1
 
     def _log_operation(self, message: str):
         now = datetime.now()
@@ -266,9 +278,10 @@ class ClassRandomSampling(QMainWindow):
         import_action.setShortcut(QKeySequence("Ctrl+O"))
         import_action.triggered.connect(self._import_csv)
         file_menu.addSeparator()
-        # 新增：更改数据目录
         change_dir_action = file_menu.addAction("设置数据目录...")
         change_dir_action.triggered.connect(self._change_data_dir)
+        export_log_action = file_menu.addAction("导出运行日志...")
+        export_log_action.triggered.connect(self._export_log)
         file_menu.addSeparator()
         exit_action = file_menu.addAction("退出(&X)")
         exit_action.setShortcut(QKeySequence("Ctrl+Q"))
@@ -282,6 +295,9 @@ class ClassRandomSampling(QMainWindow):
         reset_action = action_menu.addAction("重置权重(&R)")
         reset_action.setShortcut(QKeySequence("Ctrl+R"))
         reset_action.triggered.connect(self._reset_all_weights)
+        action_menu.addSeparator()
+        clear_result_action = action_menu.addAction("清空抽取结果")
+        clear_result_action.triggered.connect(self._clear_result)
 
         # 帮助菜单
         help_menu = menu_bar.addMenu("帮助(&H)")
@@ -431,8 +447,25 @@ class ClassRandomSampling(QMainWindow):
             self._show_log_error(f"保存数据失败：{e}")
 
     def closeEvent(self, event):
-        self._save_data(backup=False)
+        # 关闭时保存备份并记录窗口位置
+        self._save_data(backup=True)
+        self.settings.setValue("window_geometry", self.saveGeometry())
         super().closeEvent(event)
+
+    # ----------------------------------------------------------
+    # 统计数据缓存
+    # ----------------------------------------------------------
+    def _update_stats_cache(self):
+        self._stats_cache["count"] = len(self.students)
+        male = 0
+        total_weight = 0.0
+        for s in self.students:
+            if s.get("sex") == "男":
+                male += 1
+            total_weight += s["weight"]
+        self._stats_cache["male"] = male
+        self._stats_cache["female"] = self._stats_cache["count"] - male
+        self._stats_cache["total_weight"] = total_weight
 
     # ----------------------------------------------------------
     # 表格显示与筛选
@@ -453,10 +486,12 @@ class ClassRandomSampling(QMainWindow):
             display_id = str(s["id"]).zfill(3)
             id_item = QTableWidgetItem(display_id)
             id_item.setFlags(id_item.flags() & ~Qt.ItemIsEditable)
-            self.table.setItem(row, 0, id_item)
-
             name_item = QTableWidgetItem(s["name"])
             name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            if s["weight"] == 0.0:
+                id_item.setForeground(QColor(160, 160, 160))
+                name_item.setForeground(QColor(160, 160, 160))
+            self.table.setItem(row, 0, id_item)
             self.table.setItem(row, 1, name_item)
 
         self.result_label.setText("点击下方按钮抽取")
@@ -493,6 +528,9 @@ class ClassRandomSampling(QMainWindow):
             QMessageBox.information(self, "提示", f"没有可抽取的{mode_text}（权重均为0）。")
             return
 
+        if len(filtered) == 1:
+            QMessageBox.information(self, "抽取提示", "当前抽取范围内仅有一名学生，结果固定。")
+
         if not self._validate_weights(filtered):
             return
 
@@ -525,7 +563,9 @@ class ClassRandomSampling(QMainWindow):
             QMessageBox.information(self, "提示", "班级名单为空，无法修改权重。")
             return
 
-        dialog = WeightEditDialog(self.students, self)
+        # 只显示当前筛选视图内的学生
+        filtered = self._get_filtered_students()
+        dialog = WeightEditDialog(filtered, self)
         if dialog.exec() == QDialog.Accepted:
             updates = dialog.get_updates()
             for s in self.students:
@@ -533,6 +573,7 @@ class ClassRandomSampling(QMainWindow):
                     s["weight"] = round(updates[s["id"]], 2)
             self._save_data()
             self._log_operation("修改了学生权重")
+            self._update_stats_cache()
             self._update_status_bar()
             self._populate_table()
 
@@ -552,8 +593,43 @@ class ClassRandomSampling(QMainWindow):
             s["weight"] = 1.0
         self._save_data()
         self._log_operation("重置所有学生权重为 1")
+        self._update_stats_cache()
         self._update_status_bar()
         self._populate_table()
+
+    def _clear_result(self):
+        """清空抽取结果，恢复初始状态"""
+        self.result_label.setText("点击下方按钮抽取")
+        self.result_label.setStyleSheet("font-weight: bold; color: #2c3e50; padding: 20px;")
+
+    def _export_log(self):
+        """导出当前界面显示的日志到文本文件"""
+        text = self.log_display.toPlainText()
+        if not text:
+            QMessageBox.information(self, "提示", "没有日志可导出。")
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出运行日志", "log.txt", "文本文件 (*.txt);;所有文件 (*)"
+        )
+        if not file_path:
+            return
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            QMessageBox.information(self, "导出成功", f"日志已保存到：{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", f"无法写入文件：{e}")
+
+    def _try_decode_file(self, file_path: str) -> str:
+        """尝试多种编码读取文件，返回文件内容"""
+        encodings = ["utf-8-sig", "utf-8", "gbk", "gb2312"]
+        for enc in encodings:
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    return f.read()
+            except UnicodeDecodeError:
+                continue
+        raise ValueError("无法识别文件编码，请使用UTF-8或GBK编码。")
 
     @Slot()
     def _import_csv(self):
@@ -572,103 +648,111 @@ class ClassRandomSampling(QMainWindow):
             return
 
         try:
-            with open(file_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                if reader.fieldnames is None:
-                    raise ValueError("CSV 文件为空或格式错误")
+            # 使用编码自动探测读取文件内容
+            content = self._try_decode_file(file_path)
+            lines = content.splitlines()
+            # 使用csv.DictReader从字符串列表读取
+            import io
+            reader = csv.DictReader(io.StringIO(content))
+            if reader.fieldnames is None:
+                raise ValueError("CSV 文件为空或格式错误")
 
-                id_col = name_col = sex_col = weight_col = None
-                for col in reader.fieldnames:
-                    if col is None:
-                        continue
-                    col_lower = col.strip().lower()
-                    if col_lower in ("学号", "id"):
-                        id_col = col
-                    elif col_lower in ("姓名", "name"):
-                        name_col = col
-                    elif col_lower in ("性别", "sex"):
-                        sex_col = col
-                    elif col_lower in ("权重", "weight"):
-                        weight_col = col
+            id_col = name_col = sex_col = weight_col = None
+            for col in reader.fieldnames:
+                if col is None:
+                    continue
+                col_lower = col.strip().lower()
+                if col_lower in ("学号", "id"):
+                    id_col = col
+                elif col_lower in ("姓名", "name"):
+                    name_col = col
+                elif col_lower in ("性别", "sex"):
+                    sex_col = col
+                elif col_lower in ("权重", "weight"):
+                    weight_col = col
 
-                if not id_col:
-                    raise ValueError("CSV 文件必须包含“学号”列。")
-                if not name_col:
-                    raise ValueError("CSV 文件必须包含“姓名”列。")
-                if not sex_col:
-                    raise ValueError("CSV 文件必须包含“性别”列。")
+            if not id_col:
+                raise ValueError("CSV 文件必须包含“学号”列。")
+            if not name_col:
+                raise ValueError("CSV 文件必须包含“姓名”列。")
+            if not sex_col:
+                raise ValueError("CSV 文件必须包含“性别”列。")
 
-                new_students = []
-                ids_seen = set()
-                weight_fixes = []
+            new_students = []
+            ids_seen = set()
+            weight_fixes = []
 
-                for row in reader:
-                    sid_str = (row.get(id_col) or "").strip()
-                    if not sid_str:
-                        raise ValueError("存在空学号，请检查。")
-                    try:
-                        sid_int = int(sid_str)
-                    except ValueError:
-                        raise ValueError(f"学号“{sid_str}”不是合法整数。")
-                    if not (1 <= sid_int <= 999):
-                        raise ValueError(f"学号 {sid_int} 超出范围（1~999）。")
-                    if sid_int in ids_seen:
-                        raise ValueError(f"学号 {sid_int} 重复，学号必须唯一。")
+            for row in reader:
+                sid_str = (row.get(id_col) or "").strip()
+                if not sid_str:
+                    raise ValueError("存在空学号，请检查。")
+                try:
+                    sid_int = int(sid_str)
+                except ValueError:
+                    raise ValueError(f"学号“{sid_str}”不是合法整数。")
+                if not (1 <= sid_int <= 999):
+                    raise ValueError(f"学号 {sid_int} 超出范围（1~999）。")
+                if sid_int in ids_seen:
+                    raise ValueError(f"学号 {sid_int} 重复，学号必须唯一。")
 
-                    name = (row.get(name_col) or "").strip()
-                    if not name:
-                        raise ValueError(f"学号 {sid_int} 的学生姓名为空。")
+                name = (row.get(name_col) or "").strip()
+                if not name:
+                    raise ValueError(f"学号 {sid_int} 的学生姓名为空。")
 
-                    sex_val = (row.get(sex_col) or "").strip()
-                    if not sex_val:
-                        raise ValueError(f"学号 {sid_int} 的性别为空。")
-                    sex_str = sex_val.lower()
-                    if sex_str in ("男", "m", "male"):
-                        sex = "男"
-                    elif sex_str in ("女", "f", "female"):
-                        sex = "女"
-                    else:
-                        raise ValueError(f"学号 {sid_int} 的性别“{sex_val}”无效，请用男/女或m/f。")
+                sex_val = (row.get(sex_col) or "").strip()
+                if not sex_val:
+                    raise ValueError(f"学号 {sid_int} 的性别为空。")
+                sex_str = sex_val.lower()
+                if sex_str in ("男", "m", "male"):
+                    sex = "男"
+                elif sex_str in ("女", "f", "female"):
+                    sex = "女"
+                else:
+                    raise ValueError(f"学号 {sid_int} 的性别“{sex_val}”无效，请用男/女或m/f。")
 
-                    weight = 1.0
-                    if weight_col:
-                        weight_str = (row.get(weight_col) or "").strip()
-                        if weight_str:
-                            try:
-                                w = float(weight_str)
-                                if w < 0.0:
-                                    w = 0.0
-                                    weight_fixes.append(f"学号 {sid_int} 权重为负，已设为0（不参与抽取）")
-                                elif w > 99.50:
-                                    w = 99.50
-                                    weight_fixes.append(f"学号 {sid_int} 权重超过99.50，已调整为99.50")
-                                original_w = w
-                                w = round(w * 2) / 2
-                                if w > 99.50: w = 99.50
-                                elif w < 0.0: w = 0.0
-                                if abs(w - original_w) > 0.001:
-                                    weight_fixes.append(f"学号 {sid_int} 权重 {weight_str} 已调整为 {w:.2f}（步长0.50）")
-                                weight = w
-                            except ValueError:
-                                weight = 0.0
-                                weight_fixes.append(f"学号 {sid_int} 权重“{weight_str}”非法，已设为0（不参与抽取）")
+                weight = 1.0
+                if weight_col:
+                    weight_str = (row.get(weight_col) or "").strip()
+                    if weight_str:
+                        try:
+                            w = float(weight_str)
+                            if w < 0.0:
+                                w = 0.0
+                                weight_fixes.append(f"学号 {sid_int} 权重为负，已设为0（不参与抽取）")
+                            elif w > 99.50:
+                                w = 99.50
+                                weight_fixes.append(f"学号 {sid_int} 权重超过99.50，已调整为99.50")
+                            original_w = w
+                            w = round(w * 2) / 2
+                            if w > 99.50: w = 99.50
+                            elif w < 0.0: w = 0.0
+                            if abs(w - original_w) > 0.001:
+                                weight_fixes.append(f"学号 {sid_int} 权重 {weight_str} 已调整为 {w:.2f}（步长0.50）")
+                            weight = w
+                        except ValueError:
+                            weight = 0.0
+                            weight_fixes.append(f"学号 {sid_int} 权重“{weight_str}”非法，已设为0（不参与抽取）")
 
-                    new_students.append({
-                        "id": sid_int,
-                        "name": name,
-                        "sex": sex,
-                        "weight": weight
-                    })
-                    ids_seen.add(sid_int)
+                new_students.append({
+                    "id": sid_int,
+                    "name": name,
+                    "sex": sex,
+                    "weight": weight
+                })
+                ids_seen.add(sid_int)
 
-                if not new_students:
-                    raise ValueError("文件中未解析到任何有效学生，请检查名册内容。")
+            if not new_students:
+                raise ValueError("文件中未解析到任何有效学生，请检查名册内容。")
 
-                if weight_fixes:
-                    msg = "以下权重已自动修正：\n" + "\n".join(weight_fixes[:10])
-                    if len(weight_fixes) > 10:
-                        msg += f"\n... 共 {len(weight_fixes)} 处修正，仅显示前10条。"
-                    QMessageBox.information(self, "权重自动修正", msg)
+            # 权重修正详情写入日志
+            if weight_fixes:
+                for fix_msg in weight_fixes:
+                    self._log_operation(fix_msg)
+                # 汇总弹窗
+                msg = "以下权重已自动修正：\n" + "\n".join(weight_fixes[:10])
+                if len(weight_fixes) > 10:
+                    msg += f"\n... 共 {len(weight_fixes)} 处修正，仅显示前10条。"
+                QMessageBox.information(self, "权重自动修正", msg)
 
         except Exception as e:
             QMessageBox.critical(self, "导入失败", f"读取 CSV 文件时出错:\n{e}")
@@ -676,6 +760,7 @@ class ClassRandomSampling(QMainWindow):
 
         self.students = new_students
         self._populate_table()
+        self._update_stats_cache()
         self._save_data()
         self._log_operation(f"导入班级名册，共 {len(self.students)} 名学生")
         self._update_status_bar()
@@ -684,13 +769,10 @@ class ClassRandomSampling(QMainWindow):
     # 状态栏
     # ----------------------------------------------------------
     def _update_status_bar(self):
-        count = len(self.students)
-        male_count = sum(1 for s in self.students if s.get("sex") == "男")
-        female_count = count - male_count
-        total_weight = sum(s["weight"] for s in self.students)
+        c = self._stats_cache
         self.status_label.setStyleSheet("color: black;")
         self.status_label.setText(
-            f"学生总数: {count}（男: {male_count} 女: {female_count}）   |   总权重: {total_weight:.2f}"
+            f"学生总数: {c['count']}（男: {c['male']} 女: {c['female']}）   |   总权重: {c['total_weight']:.2f}"
         )
 
     @Slot()
@@ -700,7 +782,8 @@ class ClassRandomSampling(QMainWindow):
             f"{APP_NAME} v{VERSION}\n\n"
             "基于 PySide6 的安全加权随机抽取系统。\n"
             "使用学号作为唯一标识，支持性别过滤、权重调节。\n"
-            "权重步长0.50，设为0表示不参与抽取。\n\n"
+            "权重步长0.50，设为0表示不参与抽取。\n"
+            "本次更新：多编码兼容、权重编辑跟随筛选、统计缓存等。\n\n"
             "快捷键：\n"
             "  Ctrl+O  导入名册\n"
             "  Ctrl+E  修改权重\n"
@@ -710,7 +793,7 @@ class ClassRandomSampling(QMainWindow):
             "  Ctrl+2  只抽男生\n"
             "  Ctrl+3  只抽女生\n"
             "  F1      关于\n\n"
-            "注意：同一天日志文件数量上限为1000个，超出将自动覆盖最早的日志文件。"
+            "注意：同一天日志文件数量无上限，可按需清理。"
         )
 
 # ------------------------------------------------------------
@@ -718,21 +801,21 @@ if __name__ == "__main__":
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app = QApplication(sys.argv)
 
-    # 使用锁文件检测单实例（数据目录下创建 .lock 文件）
-    lock_file_path = os.path.join(
-        os.getenv("APPDATA"), "ClassRandomSampling", "app.lock"
-    )
-    # 确保锁文件目录存在
-    os.makedirs(os.path.dirname(lock_file_path), exist_ok=True)
-
+    # 锁文件跟随数据目录
+    settings = QSettings("ClassRandomSampling", "App")
+    custom_dir = settings.value("data_dir", "")
+    data_dir = custom_dir if (custom_dir and os.path.isdir(custom_dir)) else DEFAULT_DATA_DIR
+    os.makedirs(data_dir, exist_ok=True)
+    lock_file_path = os.path.join(data_dir, "app.lock")
     lock_file = QLockFile(lock_file_path)
-    lock_file.setStaleLockTime(0)  # 禁用陈旧锁判定，完全依赖 OS 文件锁
+    lock_file.setStaleLockTime(0)
 
-    if not lock_file.tryLock(100):  # 尝试加锁，100ms 超时
-        # 加锁失败 → 已有实例运行
+    if not lock_file.tryLock(100):
         QMessageBox.warning(None, "提示", "程序已在运行中，请勿重复启动。")
         sys.exit(1)
 
     window = ClassRandomSampling()
+    # 传入锁文件引用，以便切换目录时使用
+    window._lock_file = lock_file
     window.show()
     sys.exit(app.exec())
