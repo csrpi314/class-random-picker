@@ -2,7 +2,8 @@
 """班级随机抽取系统 - 应用入口。
 
 用法:
-    python main.py                  # 使用默认数据目录 %APPDATA%\\ClassRandomSampling
+    python main.py                  # 使用默认数据目录（Windows: %APPDATA%\\ClassRandomSampling；
+                                    #  Linux/macOS: ~/ClassRandomSampling）
     python main.py --data-dir DIR   # 使用自定义数据目录
 
 负责: 参数解析、单实例锁、日志初始化、窗口启动。
@@ -24,7 +25,8 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=f"{APP_TITLE} v{APP_VERSION}")
     ap.add_argument(
         "--data-dir", dest="data_dir", default=None,
-        help="自定义数据目录（默认 %APPDATA%\\ClassRandomSampling）")
+        help="自定义数据目录（默认：Windows %%APPDATA%%\\ClassRandomSampling，"
+             "Linux/macOS ~/ClassRandomSampling）")
     return ap.parse_args()
 
 

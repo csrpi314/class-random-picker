@@ -60,11 +60,15 @@ BACKUP_KEEP = 10            # JSON 自动轮换备份保留份数
 
 
 def default_data_dir() -> Path:
-    """默认数据目录：%APPDATA%\\ClassRandomSampling（可通过 --data-dir 覆盖）。"""
+    """默认数据目录（可通过 --data-dir 覆盖）。
+
+    - Windows: %APPDATA%\\ClassRandomSampling
+    - Linux / macOS: ~/ClassRandomSampling
+    """
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or str(Path.home())
         return Path(base) / APP_NAME
-    return Path.home() / ("." + APP_NAME.lower())
+    return Path.home() / APP_NAME
 
 
 def format_weight_short(value: float) -> str:

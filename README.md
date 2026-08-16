@@ -25,7 +25,7 @@
   每次运行生成独立日志文件（`yyyyMMdd.log`，同一天内自动递增序号），时间戳精确到毫秒，记录权重修改、导入、抽取结果等。当日超过 500 条时弹窗提醒导出。
 
 - **💾 数据持久化与备份**
-  学生名单与权重保存为 JSON（原子写入，防崩溃损坏），保存前自动轮换备份（保留最近 10 份），损坏时自动从备份恢复；支持导出名册为 CSV。数据默认存放在 `%APPDATA%\ClassRandomSampling\`，支持 `--data-dir` 参数和程序内切换。
+  学生名单与权重保存为 JSON（原子写入，防崩溃损坏），保存前自动轮换备份（保留最近 10 份），损坏时自动从备份恢复；支持导出名册为 CSV。数据默认存放在 `%APPDATA%\ClassRandomSampling\`（Windows）或 `~/ClassRandomSampling/`（Linux / macOS），支持 `--data-dir` 参数和程序内切换。
 
 - **🔒 单实例锁**
   同一数据目录同时只能运行一个实例（QLockFile），防止数据竞争。
@@ -43,7 +43,7 @@
 
 ### 运行环境
 
-- Windows 10 1809 及以上（源码运行）
+- Windows 10 1809 及以上 / Linux / macOS（源码运行）
 - Python 3.13+（开发用，打包后无需依赖）
 - PySide6 6.11.1
 
@@ -108,15 +108,21 @@ python -m nuitka --onefile --windows-console-mode=disable --enable-plugin=pyside
    在左侧选择抽取范围（全部 / 只抽男生 / 只抽女生），点击右侧 `🎲 随机抽取` 按钮，结果将显示在界面中央，颜色变蓝并记录日志。
 
 4. **查看记录**
-   右侧日志区显示本次运行的所有操作，历史日志默认保存在 `%APPDATA%\ClassRandomSampling\` 下的 `.log` 文件中（可更改）。
+   右侧日志区显示本次运行的所有操作，历史日志默认保存在数据目录下的 `.log` 文件中（`%APPDATA%\ClassRandomSampling\`（Windows）或 `~/ClassRandomSampling/`（Linux / macOS），可更改）。
 
 ## 📖 使用示例
 
 ### 命令行参数
 
 ```bash
-python main.py                    # 使用默认数据目录 %APPDATA%\ClassRandomSampling
-python main.py --data-dir D:\我的班级   # 使用自定义数据目录（名册、日志、备份均存于此）
+# Windows：默认数据目录 %APPDATA%\ClassRandomSampling
+python main.py
+# Linux / macOS：默认数据目录 ~/ClassRandomSampling
+python3 main.py
+
+# 使用自定义数据目录（名册、日志、备份均存于此）
+python main.py --data-dir D:\我的班级      # Windows
+python3 main.py --data-dir ~/classes/一年二班   # Linux / macOS
 ```
 
 > 同一数据目录受单实例锁保护，重复启动会提示并退出；如需多班级并行，为每个班级指定不同的 `--data-dir` 即可。
@@ -148,10 +154,11 @@ python generator.py
 ### 数据目录结构
 
 ```
-%APPDATA%\ClassRandomSampling\
+# Windows：%APPDATA%\ClassRandomSampling\    Linux / macOS：~/ClassRandomSampling/
 ├── roster.json        # 当前名册（原子写入）
 ├── app.lock           # 单实例锁
-├── yyyyMMdd.log       # 操作日志
+├── logs\
+│   └── yyyyMMdd.log   # 操作日志
 └── backups\
     ├── roster_*.json  # 名册自动轮换备份（保留 10 份）
     └── 名册备份_*.csv # 手动导出的 CSV 备份
@@ -175,10 +182,10 @@ class-random-picker/
 
 ## 🔧 技术栈
 
-- UI：PySide6 (Qt for Python)
+- UI：PySide6 (Qt for Python)，跨平台（Windows / Linux / macOS）
 - 随机数：`secrets.SystemRandom()`
 - 数据：JSON + 自定义日志文件
-- 打包：Nuitka 4.1.3（运行需要 Windows 10 1809 或更高版本）
+- 打包：Nuitka 4.1.3（仅 Windows 生成 `.exe`，运行需要 Windows 10 1809 或更高版本；Linux / macOS 直接源码运行）
 
 ## 🤝 贡献指南
 
