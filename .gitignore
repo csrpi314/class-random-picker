@@ -243,4 +243,7 @@ $RECYCLE.BIN/
 # Test CSV files
 *.csv
 
+# WorkBuddy
+.workbuddy/*
+
 # End of https://www.toptal.com/developers/gitignore/api/windows,python,sublimetext
