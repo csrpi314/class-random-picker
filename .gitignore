@@ -37,12 +37,12 @@ MANIFEST
 *.spec
 
 # Nuitka
-ipcker.build/
-picker.dist/
-picker.onefile-build/
+main.build/
+main.dist/
+main.onefile-build/
 
 
-lottery.exe
+main.exe
 
 # Installer logs
 pip-log.txt
