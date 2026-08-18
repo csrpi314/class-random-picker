@@ -11,6 +11,7 @@
 
 import argparse
 import sys
+import traceback
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -28,6 +29,25 @@ def parse_args() -> argparse.Namespace:
         help="自定义数据目录（默认：Windows %%APPDATA%%\\ClassRandomSampling，"
              "Linux/macOS ~/ClassRandomSampling）")
     return ap.parse_args()
+
+
+def _install_excepthook(logger: OpLogger) -> None:
+    """安装全局异常钩子：未处理异常写入日志后再交还默认行为（可追溯非正常退出）。
+
+    Qt 槽函数中抛出的异常若被路由到 sys.excepthook，也会被记录；
+    记录后调用原始钩子打印 traceback，不改变进程原有终止语义。
+    """
+    _orig = sys.excepthook
+
+    def handler(exc_type, exc_value, exc_tb):
+        try:
+            tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+            logger.log("未处理异常", tb_text.replace("\n", " | ")[:2000])
+        except Exception:
+            pass
+        _orig(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = handler
 
 
 def main() -> int:
@@ -59,6 +79,7 @@ def main() -> int:
             "建议及时导出日志文件。")
 
     logger = OpLogger(data_dir, on_daily_limit=_on_daily_limit)
+    _install_excepthook(logger)
 
     window = MainWindow(store, logger, str(data_dir))
     window.show()

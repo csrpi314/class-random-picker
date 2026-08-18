@@ -6,6 +6,8 @@
 - 安全加权随机：secrets.SystemRandom().choices() 放回抽取
 - 快捷键：F5 / Ctrl+1/2/3 / Ctrl+O / Ctrl+E / Ctrl+R / F1 / Ctrl+Q
 - 窗口记忆：位置 / 分割条 / 筛选模式（QSettings）
+- 菜单悬停：状态栏左侧显示当前菜单项描述
+- 日志：每一次正常 / 非正常操作（含取消、空状态、失败）均记录
 """
 
 import secrets
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
 
         self._rng = secrets.SystemRandom()          # 密码学安全随机
         self._result_text: str = ""
+        self._hover_tip: str = ""                   # 菜单悬停时的临时提示
 
         self._build_ui()
         self._build_menus()
@@ -190,42 +193,55 @@ class MainWindow(QMainWindow):
         menu_file = bar.addMenu("文件(&F)")
         act_import = QAction("导入名册(&I)...", self)
         act_import.setShortcut("Ctrl+O")
+        act_import.setStatusTip("导入 CSV 班级名册文件（Ctrl+O）")
         act_import.triggered.connect(self.import_csv)
         menu_file.addAction(act_import)
 
         act_backup = QAction("备份名册(&B)", self)
+        act_backup.setStatusTip("将当前名册导出为 CSV 备份文件")
         act_backup.triggered.connect(self.backup_roster)
         menu_file.addAction(act_backup)
         menu_file.addSeparator()
 
         act_export = QAction("导出日志(&E)...", self)
+        act_export.setStatusTip("将全部操作日志合并导出为文本文件")
         act_export.triggered.connect(self.export_logs)
         menu_file.addAction(act_export)
         act_clean = QAction("清理旧日志(&C)", self)
+        act_clean.setStatusTip(f"删除超过 {LOG_KEEP_DAYS} 天的旧日志文件")
         act_clean.triggered.connect(self.cleanup_logs)
         menu_file.addAction(act_clean)
         menu_file.addSeparator()
 
         act_quit = QAction("退出(&Q)", self)
         act_quit.setShortcut("Ctrl+Q")
+        act_quit.setStatusTip("退出程序（Ctrl+Q）")
         act_quit.triggered.connect(self.close)
         menu_file.addAction(act_quit)
 
         menu_weight = bar.addMenu("操作(&W)")
-        act_edit = QAction("Edit Weights(&E)...", self)
+        act_edit = QAction("修改权重(&E)...", self)
         act_edit.setShortcut("Ctrl+E")
+        act_edit.setStatusTip("打开权重管理对话框，调整学生权重（Ctrl+E）")
         act_edit.triggered.connect(self.edit_weights)
         menu_weight.addAction(act_edit)
-        act_reset = QAction("Restore Weights(&R)", self)
+        act_reset = QAction("重置权重(&R)", self)
         act_reset.setShortcut("Ctrl+R")
+        act_reset.setStatusTip("将所有学生权重恢复为 1（Ctrl+R）")
         act_reset.triggered.connect(self.reset_all_weights)
         menu_weight.addAction(act_reset)
 
         menu_help = bar.addMenu("帮助(&H)")
         act_about = QAction("关于(&A)", self)
         act_about.setShortcut("F1")
+        act_about.setStatusTip("查看关于信息（F1）")
         act_about.triggered.connect(self.show_about)
         menu_help.addAction(act_about)
+
+        # 菜单悬停时在状态栏显示该选项的描述，菜单关闭后恢复统计信息
+        for menu in (menu_file, menu_weight, menu_help):
+            menu.hovered.connect(self._on_menu_hovered)
+            menu.aboutToHide.connect(self._on_menu_hidden)
 
     def _build_shortcuts(self) -> None:
         # 仅注册无菜单 QAction 对应的快捷键；
@@ -235,6 +251,19 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self._set_sex(SEX_ALL))
         QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self._set_sex(SEX_MAN))
         QShortcut(QKeySequence("Ctrl+3"), self, activated=lambda: self._set_sex(SEX_WOMAN))
+
+    # ================= 菜单悬停状态栏 =================
+    def _on_menu_hovered(self, action: QAction) -> None:
+        """鼠标悬停在菜单项上时，状态栏左侧显示该选项描述。"""
+        tip = action.statusTip()
+        if tip:
+            self._hover_tip = tip
+            self.status_left.setText(tip)
+
+    def _on_menu_hidden(self) -> None:
+        """菜单关闭后恢复状态栏左侧的统计信息。"""
+        self._hover_tip = ""
+        self.refresh_status()
 
     # ================= 数据视图 =================
     def filtered_students(self) -> list[Student]:
@@ -264,9 +293,10 @@ class MainWindow(QMainWindow):
         active = sum(1 for s in pool if s.weight > 0)
         weight_sum = sum(s.weight for s in pool if s.weight > 0)
         mode = {SEX_ALL: "全部", SEX_MAN: "男生", SEX_WOMAN: "女生"}[self.sex_filter]
-        self.status_left.setText(
-            f"筛选：{mode} | {len(pool)} 人（男 {men} / 女 {women}）| "
-            f"可抽取 {active} 人")
+        stats = (f"筛选：{mode} | {len(pool)} 人（男 {men} / 女 {women}）| "
+                 f"可抽取 {active} 人")
+        # 菜单悬停期间优先显示悬停提示，否则显示统计信息
+        self.status_left.setText(self._hover_tip or stats)
         self.status_right.setText(
             f"权重合计 {format_weight_short(weight_sum)} | "
             f"数据目录: {self.data_dir}")
@@ -292,13 +322,13 @@ class MainWindow(QMainWindow):
         pool = self.filtered_students()
         eligible = [s for s in pool if s.weight > 0]
         if not pool:
-            QMessageBox.information(self, "抽取", "当前没有学生，请先导入名册（Ctrl+O）。")
             self.log_action("抽取", "失败：名册为空")
+            QMessageBox.information(self, "抽取", "当前没有学生，请先导入名册（Ctrl+O）。")
             return
         if not eligible:
+            self.log_action("抽取", "失败：无可抽取学生（权重均≤0）")
             QMessageBox.information(
                 self, "抽取", "当前筛选下没有可抽取的学生（所有权重均为 0）。")
-            self.log_action("抽取", "失败：无可抽取学生（权重均≤0）")
             return
         if len(eligible) == 1:
             # 单一学生抽取时提示
@@ -356,13 +386,15 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, "导入名册", "", "CSV 文件 (*.csv);;所有文件 (*.*)")
         if not path:
+            self.log_action("导入名册", "取消：未选择文件")
             return
+        self.log_action("导入名册", f"开始导入文件 {path}")
         try:
             new_students, encoding = import_csv_file(path)
         except RosterError as exc:
+            self.log_action("导入名册", f"失败（已回滚）：{exc}")
             QMessageBox.warning(self, "导入失败",
                                 f"导入未执行，原有名册保持不变。\n\n原因：{exc}")
-            self.log_action("导入名册", f"失败（已回滚）：{exc}")
             return
         # 覆盖前备份现有名册，防止误操作
         if self.students:
@@ -380,13 +412,14 @@ class MainWindow(QMainWindow):
 
     def backup_roster(self) -> None:
         if not self.students:
+            self.log_action("备份名册", "跳过：当前名册为空")
             QMessageBox.information(self, "备份名册", "当前名册为空，无需备份。")
             return
         try:
             target = self.store.export_roster_csv(self.students)
         except OSError as exc:
-            QMessageBox.warning(self, "备份失败", str(exc))
             self.log_action("备份名册", f"失败：{exc}")
+            QMessageBox.warning(self, "备份失败", str(exc))
             return
         self.log_action("备份名册", f"已备份到 {target}")
         QMessageBox.information(
@@ -395,10 +428,12 @@ class MainWindow(QMainWindow):
     def edit_weights(self) -> None:
         pool = self.filtered_students()
         if not pool:
+            self.log_action("编辑权重", "跳过：当前筛选视图无学生")
             QMessageBox.information(self, "权重管理", "当前筛选视图没有学生。")
             return
         dlg = WeightDialog(pool, self, log_callback=self.log_action)
         if dlg.exec() != WeightDialog.Accepted:
+            self.log_action("编辑权重", "取消：未保存修改")
             return
         weights = dlg.result_weights()
         changed = 0
@@ -414,11 +449,13 @@ class MainWindow(QMainWindow):
 
     def reset_all_weights(self) -> None:
         if not self.students:
+            self.log_action("重置权重", "跳过：名册为空")
             return
         ret = QMessageBox.question(
             self, "重置权重",
             f"确定将所有 {len(self.students)} 名学生的权重重置为 {DEFAULT_WEIGHT:g} 吗？")
         if ret != QMessageBox.Yes:
+            self.log_action("重置权重", "取消：用户取消")
             return
         for stu in self.students:
             stu.weight = DEFAULT_WEIGHT
@@ -431,10 +468,12 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self, "导出全部日志", str(default), "文本文件 (*.txt);;所有文件 (*.*)")
         if not path:
+            self.log_action("导出日志", "取消：未选择保存位置")
             return
         try:
             target = self.logger.export_all(path)
         except OSError as exc:
+            self.log_action("导出日志", f"失败：{exc}")
             QMessageBox.warning(self, "导出失败", str(exc))
             return
         self.log_action("导出日志", f"导出全部日志到 {target}")
@@ -445,6 +484,7 @@ class MainWindow(QMainWindow):
             self, "清理旧日志",
             f"将删除 {LOG_KEEP_DAYS} 天前的日志文件，是否继续？")
         if ret != QMessageBox.Yes:
+            self.log_action("清理旧日志", "取消：用户取消")
             return
         removed = self.logger.cleanup_old(LOG_KEEP_DAYS)
         self.log_action("清理旧日志", f"删除 {removed} 个过期日志文件")
@@ -452,6 +492,7 @@ class MainWindow(QMainWindow):
             self, "清理完成", f"已删除 {removed} 个过期日志文件。")
 
     def show_about(self) -> None:
+        self.log_action("关于", "打开关于对话框")
         QMessageBox.about(
             self, "关于",
             f"<b>{APP_TITLE} v{APP_VERSION}</b><br><br>"

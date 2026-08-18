@@ -6,6 +6,7 @@
 - 批量设置 / 批量置零（应用于选中行）
 - 一键重置所有行为 1.0
 - 编辑操作针对副本，取消不生效
+- 每一次正常 / 非正常操作（含取消、未选择行）均通过日志回调记录
 """
 
 import copy
@@ -96,7 +97,7 @@ class WeightDialog(QDialog):
         buttons.button(QDialogButtonBox.Ok).setText("确定")
         buttons.button(QDialogButtonBox.Cancel).setText("取消")
         buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
+        buttons.rejected.connect(self._on_reject)
         layout.addWidget(buttons)
 
     # ---------- 数据 ----------
@@ -149,12 +150,16 @@ class WeightDialog(QDialog):
     def _batch_set(self) -> None:
         ids = self._selected_ids()
         if not ids:
+            if self._log:
+                self._log("批量设置权重", "取消：未选择行")
             QMessageBox.information(self, "批量设置", "请先在表格中选择要设置的行。")
             return
         value, ok = QInputDialog.getDouble(
             self, "批量设置权重", f"为选中的 {len(ids)} 名学生设置权重（0 = 不参与抽取）:",
             DEFAULT_WEIGHT, WEIGHT_MIN, WEIGHT_MAX, WEIGHT_DECIMALS)
         if not ok:
+            if self._log:
+                self._log("批量设置权重", "取消：未输入值")
             return
         for sid in ids:
             self._editing[sid].weight = round(value, WEIGHT_DECIMALS)
@@ -168,12 +173,16 @@ class WeightDialog(QDialog):
     def _batch_zero(self) -> None:
         ids = self._selected_ids()
         if not ids:
+            if self._log:
+                self._log("批量置零", "取消：未选择行")
             QMessageBox.information(self, "批量置零", "请先在表格中选择要置零的行。")
             return
         if QMessageBox.question(
                 self, "批量置零",
                 f"确定将选中的 {len(ids)} 名学生权重置为 0（不参与抽取）吗？") \
                 != QMessageBox.Yes:
+            if self._log:
+                self._log("批量置零", "取消：用户取消")
             return
         for sid in ids:
             self._editing[sid].weight = 0.0
@@ -190,6 +199,8 @@ class WeightDialog(QDialog):
         if QMessageBox.question(
                 self, "重置权重", f"确定将所有 {len(self._editing)} 名学生权重重置为 1.0 吗？") \
                 != QMessageBox.Yes:
+            if self._log:
+                self._log("重置权重", "取消：用户取消")
             return
         for stu in self._editing.values():
             stu.weight = DEFAULT_WEIGHT
@@ -215,6 +226,12 @@ class WeightDialog(QDialog):
     # ---------- 结果 ----------
     def _on_accept(self) -> None:
         self.accept()
+
+    def _on_reject(self) -> None:
+        """取消按钮：记录未保存后关闭。"""
+        if self._log:
+            self._log("编辑权重", "取消：弹窗取消按钮")
+        self.reject()
 
     def result_weights(self) -> dict[int, float]:
         """返回 {学号: 权重} 映射，供主窗口回写。"""
