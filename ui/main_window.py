@@ -390,7 +390,7 @@ class MainWindow(QMainWindow):
             return
         self.log_action("导入名册", f"开始导入文件 {path}")
         try:
-            new_students, encoding = import_csv_file(path)
+            new_students, encoding, warnings = import_csv_file(path)
         except RosterError as exc:
             self.log_action("导入名册", f"失败（已回滚）：{exc}")
             QMessageBox.warning(self, "导入失败",
@@ -406,9 +406,22 @@ class MainWindow(QMainWindow):
         self.save_and_refresh()
         self.log_action("导入名册",
                         f"成功导入 {len(new_students)} 人（编码 {encoding}）")
-        QMessageBox.information(
-            self, "导入成功",
-            f"成功导入 {len(new_students)} 人（编码 {encoding}）。")
+        if warnings:
+            # 权重非法（非 0.0 / 1.0）：已恢复为默认值 1.0，逐条报错提示
+            for msg in warnings:
+                self.log_action("导入名册", f"权重校验：{msg}")
+            preview = "\n".join(warnings[:10])
+            if len(warnings) > 10:
+                preview += f"\n……共 {len(warnings)} 条"
+            QMessageBox.warning(
+                self, "权重已纠正",
+                f"成功导入 {len(new_students)} 人（编码 {encoding}），"
+                f"但以下权重值非法（仅允许 0.0 或 1.0），"
+                f"已恢复为默认值 1：\n\n{preview}")
+        else:
+            QMessageBox.information(
+                self, "导入成功",
+                f"成功导入 {len(new_students)} 人（编码 {encoding}）。")
 
     def backup_roster(self) -> None:
         if not self.students:
@@ -438,9 +451,14 @@ class MainWindow(QMainWindow):
         weights = dlg.result_weights()
         changed = 0
         for stu in self.students:
-            if stu.id in weights and weights[stu.id] != stu.weight:
-                stu.weight = round(weights[stu.id], WEIGHT_DECIMALS)
-                changed += 1
+            if stu.id in weights:
+                # 校验兜底：仅允许 0.0 / 1.0，非法值恢复为默认权重
+                new_w = weights[stu.id]
+                if new_w not in (0.0, 1.0):
+                    new_w = DEFAULT_WEIGHT
+                if new_w != stu.weight:
+                    stu.weight = round(new_w, WEIGHT_DECIMALS)
+                    changed += 1
         self.save_and_refresh()
         self.log_action("编辑权重",
                         f"基于筛选视图 {len(pool)} 人，修改 {changed} 人")

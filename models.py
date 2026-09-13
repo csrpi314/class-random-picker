@@ -21,14 +21,17 @@ from config import (
     SEX_FEMALE,
     STUDENT_ID_MIN,
     STUDENT_ID_MAX,
-    WEIGHT_MIN,
-    WEIGHT_MAX,
+    WEIGHT_ALLOWED,
     WEIGHT_DECIMALS,
 )
 
 
 class RosterError(Exception):
     """名册相关错误（导入失败等）。"""
+
+
+class WeightValueError(RosterError):
+    """权重值非法（仅允许 0.0 / 1.0），调用方可报错并恢复为默认权重。"""
 
 
 @dataclass
@@ -61,7 +64,8 @@ class Student:
             weight = float(data.get("weight", DEFAULT_WEIGHT))
         except (TypeError, ValueError):
             weight = DEFAULT_WEIGHT
-        if weight < WEIGHT_MIN or weight > WEIGHT_MAX:
+        # 权重仅允许 0.0 / 1.0，非法值恢复为默认权重 1.0
+        if weight not in WEIGHT_ALLOWED:
             weight = DEFAULT_WEIGHT
         return cls(sid, name, sex, round(weight, WEIGHT_DECIMALS))
 
@@ -77,7 +81,13 @@ def normalize_sex(raw) -> str:
 
 
 def parse_weight(raw, line_no: int) -> float:
-    """解析权重，缺省/空 -> 默认权重；非法数字抛错。"""
+    """解析权重：仅允许 0.0 / 1.0。
+
+    - 缺省 / 空 -> 默认权重 1.0
+    - 非数字 -> RosterError（致命，导入整体回滚）
+    - 数字但不是 0.0 / 1.0 -> WeightValueError（可恢复，
+      调用方应报错并将该生权重恢复为默认值 1.0）
+    """
     text = str(raw).strip()
     if text == "":
         return DEFAULT_WEIGHT
@@ -85,8 +95,9 @@ def parse_weight(raw, line_no: int) -> float:
         value = float(text)
     except ValueError:
         raise RosterError(f"第 {line_no} 行权重不是有效数字: {raw!r}")
-    if not (WEIGHT_MIN <= value <= WEIGHT_MAX):
-        raise RosterError(f"第 {line_no} 行权重超出范围 [{WEIGHT_MIN}, {WEIGHT_MAX}]: {raw!r}")
+    if value not in WEIGHT_ALLOWED:
+        raise WeightValueError(
+            f"第 {line_no} 行权重 {text} 非法（仅允许 0.0 或 1.0）")
     return round(value, WEIGHT_DECIMALS)
 
 
@@ -146,15 +157,18 @@ def _load_text(path: Path) -> tuple[str, str]:
     return _detect_encoding(raw)
 
 
-def import_csv(path) -> tuple[list[Student], str]:
+def import_csv(path) -> tuple[list[Student], str, list[str]]:
     """从 CSV 导入名册。
 
-    返回 (students, encoding)。整个文件解析成功后才返回；
-    任何一行错误都会抛出 RosterError，且不会产生部分结果
-    （调用方保持旧数据不替换即为“回滚”）。
+    返回 (students, encoding, warnings)。
+    - 解析失败（学号/姓名/性别/权重非数字等）抛出 RosterError，
+      任何一行致命错误都会整体取消导入，不产生部分结果。
+    - 权重值非法（不是 0.0 / 1.0）不取消导入：该生权重恢复为
+      默认值 1.0，并在 warnings 中返回告警文本供调用方报错提示。
     """
     path = Path(path)
     text, encoding = _load_text(path)
+    warnings: list[str] = []
 
     try:
         rows = list(csv.reader(io.StringIO(text)))
@@ -216,8 +230,12 @@ def import_csv(path) -> tuple[list[Student], str]:
         except RosterError as exc:
             raise RosterError(f"第 {line_no} 行（学号 {sid}）{exc}")
 
-        # 权重（可选，默认 1）
-        weight = parse_weight(raw_weight, line_no)
+        # 权重（可选，默认 1；仅允许 0.0 / 1.0，非法值恢复默认并告警）
+        try:
+            weight = parse_weight(raw_weight, line_no)
+        except WeightValueError as exc:
+            warnings.append(f"{exc}，已恢复为默认值 {DEFAULT_WEIGHT:g}")
+            weight = DEFAULT_WEIGHT
 
         students.append(Student(sid, name, sex, weight))
 
@@ -225,4 +243,4 @@ def import_csv(path) -> tuple[list[Student], str]:
         raise RosterError(f"没有解析到任何学生记录: {path.name}")
 
     # 学号去重校验已做；返回新列表
-    return students, encoding
+    return students, encoding, warnings

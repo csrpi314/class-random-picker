@@ -16,10 +16,13 @@ ORG_NAME = APP_NAME                       # 用于 QSettings 存储窗口记忆
 
 # ---- 权重规则 ----
 DEFAULT_WEIGHT = 1.0        # 默认权重
-WEIGHT_STEP = 0.50          # 权重编辑步长
+WEIGHT_STEP = 1.0           # 权重编辑步长（0.0 <-> 1.0 切换）
 WEIGHT_MIN = 0.0            # 0 = 不参与抽取
-WEIGHT_MAX = 999999.0       # 权重上限
-WEIGHT_DECIMALS = 2         # 权重显示小数位
+WEIGHT_MAX = 1.0            # 权重上限
+WEIGHT_DECIMALS = 1         # 权重显示小数位
+# 权重仅允许 0.0（不参与）或 1.0（参与）两个值，其余一律视为非法，
+# 校验失败时报错并恢复为 DEFAULT_WEIGHT
+WEIGHT_ALLOWED = (0.0, 1.0)
 
 # ---- 学号规则 ----
 STUDENT_ID_MIN = 1
@@ -72,15 +75,9 @@ def default_data_dir() -> Path:
 
 
 def format_weight_short(value: float) -> str:
-    """大权重简写：>=1e6 -> M，>=1e3 -> k，其余原样。"""
+    """权重简写：权重仅 0/1，合计即参与人数，直接整数显示。"""
     try:
         v = float(value)
     except (TypeError, ValueError):
         return "0"
-    if v >= 1_000_000:
-        return f"{v / 1_000_000:.1f}M"
-    if v >= 1_000:
-        return f"{v / 1_000:.1f}k"
-    if v == int(v):
-        return str(int(v))
-    return f"{v:.2f}".rstrip("0").rstrip(".")
+    return str(int(v)) if v == int(v) else f"{v:g}"

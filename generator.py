@@ -13,9 +13,8 @@ def random_name():
     return s + n
 
 def random_weight():
-    # 0 ~ 99.5，步长0.5
-    val = round(random.uniform(0,99.5)*2)/2
-    return val
+    # 权重仅允许 0.0（不参与抽取）/ 1.0（参与抽取）
+    return random.choice([0.0, 1.0])
 
 def main():
     rows = []
